@@ -1,6 +1,6 @@
 """Multi-Token Prediction (MTP) Block implementation."""
 
-from typing import Callable
+from typing import Callable, NamedTuple
 
 import torch
 import torch.nn as nn
@@ -12,7 +12,12 @@ from .mtp_layer import MTPLayer
 from .utils import roll_sequence_context
 
 
-MTPDepthOutput = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+class MTPDepthOutput(NamedTuple):
+    """Per-depth MTP output, named to avoid positional access at call sites."""
+
+    hidden: torch.Tensor
+    router_logits: torch.Tensor
+    router_weights: torch.Tensor
 
 
 class MTPBlock(nn.Module):
@@ -166,7 +171,13 @@ class MTPBlock(nn.Module):
                 position_embeddings=position_embeddings,
                 seq_ctx=current_seq_ctx,
             )
-            mtp_outputs.append((current_hidden_states, router_logits, router_weights))
+            mtp_outputs.append(
+                MTPDepthOutput(
+                    hidden=current_hidden_states,
+                    router_logits=router_logits,
+                    router_weights=router_weights,
+                )
+            )
 
         return mtp_outputs
 
@@ -209,7 +220,13 @@ class MTPBlock(nn.Module):
             router_weights = list(layer_results[2 * n :])
 
             for mb_idx in range(n):
-                outputs_per_mb[mb_idx].append((new_hidden[mb_idx], router_logits[mb_idx], router_weights[mb_idx]))
+                outputs_per_mb[mb_idx].append(
+                    MTPDepthOutput(
+                        hidden=new_hidden[mb_idx],
+                        router_logits=router_logits[mb_idx],
+                        router_weights=router_weights[mb_idx],
+                    )
+                )
 
             current_hidden_states_list = new_hidden
 
