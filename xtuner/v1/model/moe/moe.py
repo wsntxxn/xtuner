@@ -253,7 +253,10 @@ class MoE(BaseModel):
                 ctx_z = ctx.get("z_loss")
                 if ctx_z is not None:
                     z_ctx.append(ctx_z)
-            return balancing_ctx, z_ctx
+            # Collapse empty fan-out lists to None so downstream guards
+            # (`if ctx is None`, `_z_loss_dist_token_count`, AuxLoss.accumulate fan-out)
+            # can treat "no context across any micro-batch" as the no-op case.
+            return (balancing_ctx or None), (z_ctx or None)
 
         return loss_ctx.get("balancing"), loss_ctx.get("z_loss")
 
@@ -422,7 +425,10 @@ class MoE(BaseModel):
         else:
             cat_input_ids = torch.cat([ctx.input_ids for ctx in seq_ctx_list], dim=1)  # type: ignore
             cat_hidden_states = self.embed_tokens(cat_input_ids)
-        cat_position_ids = torch.cat([ctx.position_ids for ctx in seq_ctx_list], dim=1)  # type: ignore
+        # M-RoPE position_ids are 3D [axes, batch, seq] for VL while text-only ones are 2D
+        # [batch, seq]; -1 selects the seq dim in both cases. Hard-coded dim=1 was a text-only
+        # assumption and produced a wrong-length cos/sin for VL under intra_layer_micro_batch.
+        cat_position_ids = torch.cat([ctx.position_ids for ctx in seq_ctx_list], dim=-1)  # type: ignore
         cat_position_embeddings = self.rotary_emb(cat_hidden_states, cat_position_ids)  # type: ignore
         position_embeddings_list = list(
             zip(
